@@ -1,0 +1,67 @@
+@host = http://localhost:5063
+@categoryId = 1
+@supplierId = 1
+@productId = 1
+
+### Create category; set categoryId to the returned id
+POST {{host}}/api/categories
+Content-Type: application/json
+
+{ "name": "Electronics", "description": "Electronic devices" }
+
+### Create supplier; set supplierId to the returned id
+POST {{host}}/api/suppliers
+Content-Type: application/json
+
+{ "name": "Demo Supplier", "email": "sales@example.com" }
+
+### Create product; set productId to the returned id
+POST {{host}}/api/products
+Content-Type: application/json
+
+{ "name": "Keyboard", "price": 49.99, "stockQuantity": 10, "categoryId": {{categoryId}}, "supplierId": {{supplierId}} }
+
+### List categories
+GET {{host}}/api/categories
+
+### Get category
+GET {{host}}/api/categories/{{categoryId}}
+
+### Update category
+PUT {{host}}/api/categories/{{categoryId}}
+Content-Type: application/json
+
+{ "name": "Computer Accessories", "description": "Updated category" }
+
+### List suppliers
+GET {{host}}/api/suppliers
+
+### Get supplier
+GET {{host}}/api/suppliers/{{supplierId}}
+
+### Update supplier
+PUT {{host}}/api/suppliers/{{supplierId}}
+Content-Type: application/json
+
+{ "name": "Updated Supplier", "email": "updated@example.com" }
+
+### List products
+GET {{host}}/api/products
+
+### Get product
+GET {{host}}/api/products/{{productId}}
+
+### Update product
+PUT {{host}}/api/products/{{productId}}
+Content-Type: application/json
+
+{ "name": "Mechanical Keyboard", "price": 79.99, "stockQuantity": 8, "categoryId": {{categoryId}}, "supplierId": {{supplierId}} }
+
+### Delete product before its category and supplier
+DELETE {{host}}/api/products/{{productId}}
+
+### Delete category
+DELETE {{host}}/api/categories/{{categoryId}}
+
+### Delete supplier
+DELETE {{host}}/api/suppliers/{{supplierId}}
