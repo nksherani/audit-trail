@@ -1,9 +1,9 @@
-using AuditTrail.Api.Entities;
+using AuditTrail.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace AuditTrail.Api.Data;
+namespace AuditTrail.Infrastructure.Persistence;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public partial class AppDbContext : DbContext
 {
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
@@ -11,20 +11,39 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        AuditingModelConfiguration.Configure(modelBuilder);
+        modelBuilder.Entity<ImportCheckpoint>(entity =>
+        {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.Cursor).HasMaxLength(500);
+        });
         modelBuilder.Entity<Category>(entity =>
         {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.Property(x => x.TenantId).HasMaxLength(100);
+            entity.HasQueryFilter(x => x.TenantId == CurrentTenantId);
             entity.Property(x => x.Name).HasMaxLength(100).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(500);
         });
 
         modelBuilder.Entity<Supplier>(entity =>
         {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.Property(x => x.TenantId).HasMaxLength(100);
+            entity.HasQueryFilter(x => x.TenantId == CurrentTenantId);
             entity.Property(x => x.Name).HasMaxLength(150).IsRequired();
             entity.Property(x => x.Email).HasMaxLength(254).IsRequired();
+            entity.Property(x => x.InternalNote).HasMaxLength(500);
         });
 
         modelBuilder.Entity<Product>(entity =>
         {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.Property(x => x.TenantId).HasMaxLength(100);
+            entity.HasQueryFilter(x => x.TenantId == CurrentTenantId);
             entity.Property(x => x.Name).HasMaxLength(150).IsRequired();
             entity.Property(x => x.Price).HasPrecision(18, 2);
             entity.HasOne(x => x.Category).WithMany(x => x.Products)

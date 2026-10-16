@@ -1,79 +1,40 @@
-using AuditTrail.Api.Contracts;
-using AuditTrail.Api.Data;
-using AuditTrail.Api.Entities;
+using System.ComponentModel.DataAnnotations;
+using AuditTrail.Application.Auditing;
+using AuditTrail.Application.Catalog;
+using AuditTrail.Application.Contracts;
+using AuditTrail.Domain.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-
 namespace AuditTrail.Api.Controllers;
-
-[ApiController]
 [Route("api/products")]
-public class ProductsController(AppDbContext db) : ControllerBase
+public sealed class ProductsController(ICrudService<ProductRequest, ProductResponse> service,
+    ProductService products, IAuditedBulkOperations bulk) : CrudController<ProductRequest, ProductResponse>(service)
 {
-    [HttpGet]
-    public async Task<ActionResult<List<ProductResponse>>> GetAll(CancellationToken ct) =>
-        await Responses(db.Products.OrderBy(x => x.Id)).ToListAsync(ct);
-
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<ProductResponse>> Get(int id, CancellationToken ct)
+    protected override Guid Id(ProductResponse response) => response.Id;
+    [HttpPost("{id:guid}/soft-delete")]
+    public async Task<IActionResult> SoftDelete(Guid id, CancellationToken ct)
+    { await products.SetDeletedAsync(id, true, ct); return NoContent(); }
+    [HttpPost("{id:guid}/restore")]
+    public async Task<IActionResult> Restore(Guid id, CancellationToken ct)
+    { await products.SetDeletedAsync(id, false, ct); return NoContent(); }
+    [HttpPost("{id:guid}/review"), Authorize(Policy = "AuditWriter")]
+    public async Task<IActionResult> Review(Guid id, ReviewRequest request, CancellationToken ct)
+    { await products.ReviewAsync(id, request.Reason, ct); return NoContent(); }
+    [HttpPost("bulk-update"), Authorize(Policy = "AuditWriter")]
+    public async Task<object> BulkUpdate(BulkProductRequest request, CancellationToken ct)
     {
-        var product = await Responses(db.Products.Where(x => x.Id == id)).SingleOrDefaultAsync(ct);
-        return product is null ? NotFound() : Ok(product);
+        var changes = new Dictionary<string, object?>();
+        if (request.Price is not null) changes[nameof(Product.Price)] = request.Price.Value;
+        if (request.StockQuantity is not null) changes[nameof(Product.StockQuantity)] = request.StockQuantity.Value;
+        if (request.IsDeleted is not null)
+        { changes[nameof(Product.IsDeleted)] = request.IsDeleted.Value; changes[nameof(Product.DeletedAt)] = request.IsDeleted.Value ? DateTimeOffset.UtcNow : null; }
+        return new { affected = await bulk.UpdateAsync(new AuditedBulkUpdateSpec<Product>(request.Ids, changes, OperationId: request.OperationId), ct) };
     }
-
-    [HttpPost]
-    public async Task<ActionResult<ProductResponse>> Create(ProductRequest request, CancellationToken ct)
-    {
-        await ValidateReferences(request, ct);
-        if (!ModelState.IsValid) return ValidationProblem(ModelState);
-        var product = new Product();
-        Apply(product, request);
-        db.Products.Add(product);
-        await db.SaveChangesAsync(ct);
-        var response = await Responses(db.Products.Where(x => x.Id == product.Id)).SingleAsync(ct);
-        return CreatedAtAction(nameof(Get), new { id = product.Id }, response);
-    }
-
-    [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, ProductRequest request, CancellationToken ct)
-    {
-        var product = await db.Products.FindAsync([id], ct);
-        if (product is null) return NotFound();
-        await ValidateReferences(request, ct);
-        if (!ModelState.IsValid) return ValidationProblem(ModelState);
-        Apply(product, request);
-        await db.SaveChangesAsync(ct);
-        return NoContent();
-    }
-
-    [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Delete(int id, CancellationToken ct)
-    {
-        var product = await db.Products.FindAsync([id], ct);
-        if (product is null) return NotFound();
-        db.Products.Remove(product);
-        await db.SaveChangesAsync(ct);
-        return NoContent();
-    }
-
-    private static IQueryable<ProductResponse> Responses(IQueryable<Product> products) => products.AsNoTracking()
-        .Select(x => new ProductResponse(x.Id, x.Name, x.Price, x.StockQuantity,
-            x.CategoryId, x.Category.Name, x.SupplierId, x.Supplier.Name));
-
-    private async Task ValidateReferences(ProductRequest request, CancellationToken ct)
-    {
-        if (!await db.Categories.AnyAsync(x => x.Id == request.CategoryId, ct))
-            ModelState.AddModelError(nameof(request.CategoryId), "Category does not exist.");
-        if (!await db.Suppliers.AnyAsync(x => x.Id == request.SupplierId, ct))
-            ModelState.AddModelError(nameof(request.SupplierId), "Supplier does not exist.");
-    }
-
-    private static void Apply(Product product, ProductRequest request)
-    {
-        product.Name = request.Name.Trim();
-        product.Price = request.Price;
-        product.StockQuantity = request.StockQuantity;
-        product.CategoryId = request.CategoryId;
-        product.SupplierId = request.SupplierId;
-    }
+    [HttpPost("bulk-delete"), Authorize(Policy = "AuditWriter")]
+    public async Task<object> BulkDelete(BulkDeleteRequest request, CancellationToken ct) =>
+        new { affected = await bulk.DeleteAsync(new AuditedBulkDeleteSpec<Product>(request.Ids, OperationId: request.OperationId), ct) };
 }
+public sealed record ReviewRequest([Required, StringLength(1000)] string Reason);
+public sealed record BulkDeleteRequest([Required] Guid[] Ids, Guid? OperationId);
+public sealed record BulkProductRequest([Required] Guid[] Ids, [Range(typeof(decimal), "0", "9999999999999999.99")] decimal? Price,
+    [Range(0, int.MaxValue)] int? StockQuantity, bool? IsDeleted, Guid? OperationId);

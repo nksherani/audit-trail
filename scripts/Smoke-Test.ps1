@@ -30,6 +30,11 @@ try {
     $body = @{ name = 'Smoke product'; price = 12.50; stockQuantity = 5; categoryId = $category.id; supplierId = $supplier.id }
     $product = Send-Request POST '/api/products' $body 201
 
+    foreach ($entity in @($category, $supplier, $product)) {
+        $parsedId = [guid]::Parse($entity.id)
+        if ($parsedId -eq [guid]::Empty) { throw 'Entity ID must be a nonempty GUID.' }
+    }
+
     foreach ($resource in @('categories', 'suppliers', 'products')) {
         $null = Send-Request GET "/api/$resource" $null 200
     }
@@ -56,7 +61,12 @@ try {
     $body.price = -1
     $null = Send-Request POST '/api/products' $body 400
     $body.price = 1
-    $body.categoryId = 2147483647
+    $body.categoryId = [guid]::NewGuid().ToString()
+    $null = Send-Request POST '/api/products' $body 400
+    $body.categoryId = [guid]::Empty.ToString()
+    $null = Send-Request POST '/api/products' $body 400
+    $body.categoryId = $category.id
+    $body.supplierId = [guid]::Empty.ToString()
     $null = Send-Request POST '/api/products' $body 400
     $null = Send-Request POST '/api/categories' @{ name = ' ' } 400
     $null = Send-Request POST '/api/suppliers' @{ name = 'Invalid'; email = 'invalid-email' } 400

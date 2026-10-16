@@ -70,3 +70,16 @@ keys and nonnegative price/stock check constraints.
 
 This is an unauthenticated local demo with no seeded data. No audit entities,
 interceptors, or SaveChanges overrides have been added.
+
+## Application-generated GUID keys
+
+All entity primary keys are `Guid` values initialized with `Guid.NewGuid()` in C#.
+EF uses `ValueGeneratedNever()` for these keys; the final SQL Server schema has
+no identity columns or GUID default generators. Product foreign keys, DTOs, and
+route parameters also use GUIDs. Supply category/supplier IDs returned by POST
+when creating a product; primary keys are not accepted in request DTOs.
+
+`UseApplicationGeneratedGuids` upgrades existing integer keys without deleting
+rows, assigning GUIDs to historical rows once and remapping product references.
+Existing external references to integer IDs must be updated. This migration
+cannot restore the original integer IDs on rollback; restore a backup to revert.

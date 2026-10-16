@@ -1,5 +1,11 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/AuditTrail.Api/AuditTrail.Api.csproj" />
+    <Project Path="src/AuditTrail.Application/AuditTrail.Application.csproj" />
+    <Project Path="src/AuditTrail.Domain/AuditTrail.Domain.csproj" />
+    <Project Path="src/AuditTrail.Infrastructure/AuditTrail.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AuditTrail.Tests/AuditTrail.Tests.csproj" />
   </Folder>
 </Solution>
