@@ -50,6 +50,9 @@ masked and Supplier.InternalNote is ignored to demonstrate both policies.
 
 ## Save semantics and recovery
 
+See [why AuditOperations exists](audit-operations.md) for its schema, the lost
+commit acknowledgement example, its relationship to AuditTrail, and replay limits.
+
 `AppDbContext.SaveChangesAsync(bool, CancellationToken)` detects changes, checks
 GUIDs and tracked provenance, applies trusted tenant context, builds automatic and
 manual rows, and calls the underlying EF save once. The audit row IDs are generated
