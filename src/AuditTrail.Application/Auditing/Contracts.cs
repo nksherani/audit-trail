@@ -37,6 +37,7 @@ public interface IAuditTrailWriter
 
 // Supported SQL: explicit IDs, optional equality conditions, and constant assignments only.
 // Optional expected rowversions require every requested row to match or the whole command rolls back.
+public enum BulkValue { UtcNow }
 public sealed record AuditedBulkUpdateSpec<T>(IReadOnlyList<Guid> Ids,
     IReadOnlyDictionary<string, object?> Changes,
     IReadOnlyDictionary<string, object?>? Conditions = null,

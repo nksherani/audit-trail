@@ -15,5 +15,9 @@ public sealed class CatalogStore(AppDbContext db) : ICatalogStore
         db.Products.AnyAsync(x => (categoryId == null || x.CategoryId == categoryId) && (supplierId == null || x.SupplierId == supplierId), ct);
     public void Add<T>(T entity) where T : class => db.Set<T>().Add(entity);
     public void Remove<T>(T entity) where T : class => db.Set<T>().Remove(entity);
-    public Task<int> SaveAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+    public async Task<int> SaveAsync(CancellationToken ct)
+    {
+        try { return await db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException) { throw new BusinessConflictException("The entity changed concurrently. Reload it before retrying."); }
+    }
 }

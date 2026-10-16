@@ -10,16 +10,17 @@ public partial class UseApplicationGeneratedGuids
         {
             migrationBuilder.AddColumn<Guid>("NewId", table, type: "uniqueidentifier", nullable: true);
             // Backfill historical rows only. New entities generate their IDs in C#.
-            migrationBuilder.Sql($"UPDATE [{table}] SET [NewId] = NEWID();");
+            // Defer column binding until the guarded migration actually runs in an idempotent script.
+            migrationBuilder.Sql($"EXEC(N'UPDATE [{table}] SET [NewId] = NEWID();');");
         }
 
         migrationBuilder.AddColumn<Guid>("NewCategoryId", "Products", type: "uniqueidentifier", nullable: true);
         migrationBuilder.AddColumn<Guid>("NewSupplierId", "Products", type: "uniqueidentifier", nullable: true);
         migrationBuilder.Sql("""
-            UPDATE p SET p.NewCategoryId = c.NewId, p.NewSupplierId = s.NewId
+            EXEC(N'UPDATE p SET p.NewCategoryId = c.NewId, p.NewSupplierId = s.NewId
             FROM Products p
             INNER JOIN Categories c ON p.CategoryId = c.Id
-            INNER JOIN Suppliers s ON p.SupplierId = s.Id;
+            INNER JOIN Suppliers s ON p.SupplierId = s.Id;');
             """);
 
         migrationBuilder.DropForeignKey("FK_Products_Categories_CategoryId", "Products");

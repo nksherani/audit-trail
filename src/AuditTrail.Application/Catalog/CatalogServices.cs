@@ -77,13 +77,14 @@ public sealed class SupplierService(ICatalogStore store) : CrudService<Supplier,
         if (await Store.HasProductsAsync(null, id, ct)) throw new BusinessConflictException("Delete or reassign this supplier's products first.");
     }
 }
-public sealed class ProductService(ICatalogStore store, IAuditTrailWriter writer)
+public sealed class ProductService(ICatalogStore store, IAuditTrailWriter writer, IAuditedBulkOperations bulk, TimeProvider clock)
     : CrudService<Product, ProductRequest, ProductResponse>(store)
 {
     protected override ProductResponse Map(Product x) => new(x.Id, x.Name, x.Price, x.StockQuantity,
         x.CategoryId, x.Category.Name, x.SupplierId, x.Supplier.Name);
     protected override async Task ApplyAsync(Product x, ProductRequest r, CancellationToken ct)
     {
+        if (decimal.Round(r.Price, 2) != r.Price) throw new BusinessValidationException("Price must have at most two decimal places.");
         x.Category = await Store.FindAsync<Category>(r.CategoryId, ct) ?? throw new BusinessValidationException("Category does not exist.");
         x.Supplier = await Store.FindAsync<Supplier>(r.SupplierId, ct) ?? throw new BusinessValidationException("Supplier does not exist.");
         x.Name = r.Name.Trim(); x.Price = r.Price; x.StockQuantity = r.StockQuantity;
@@ -93,7 +94,7 @@ public sealed class ProductService(ICatalogStore store, IAuditTrailWriter writer
     {
         var entity = await Find(id, ct);
         entity.IsDeleted = deleted;
-        entity.DeletedAt = deleted ? DateTimeOffset.UtcNow : null;
+        entity.DeletedAt = deleted ? clock.GetUtcNow() : null;
         await Store.SaveAsync(ct);
     }
     public async Task ReviewAsync(Guid id, string reason, CancellationToken ct)
@@ -103,4 +104,18 @@ public sealed class ProductService(ICatalogStore store, IAuditTrailWriter writer
             EventName = "ProductReviewed", Reason = reason, Description = "Product reviewed by an authorized operator." });
         await Store.SaveAsync(ct);
     }
+    public Task<int> BulkUpdateAsync(BulkProductRequest request, CancellationToken ct)
+    {
+        var changes = new Dictionary<string, object?>();
+        if (request.Price is not null) changes[nameof(Product.Price)] = request.Price.Value;
+        if (request.StockQuantity is not null) changes[nameof(Product.StockQuantity)] = request.StockQuantity.Value;
+        if (request.IsDeleted is not null)
+        {
+            changes[nameof(Product.IsDeleted)] = request.IsDeleted.Value;
+            changes[nameof(Product.DeletedAt)] = request.IsDeleted.Value ? BulkValue.UtcNow : null;
+        }
+        return bulk.UpdateAsync(new AuditedBulkUpdateSpec<Product>(request.Ids, changes, OperationId: request.OperationId), ct);
+    }
+    public Task<int> BulkDeleteAsync(BulkDeleteRequest request, CancellationToken ct) =>
+        bulk.DeleteAsync(new AuditedBulkDeleteSpec<Product>(request.Ids, OperationId: request.OperationId), ct);
 }

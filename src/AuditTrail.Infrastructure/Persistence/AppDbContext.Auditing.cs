@@ -31,6 +31,7 @@ public partial class AppDbContext
         _contextProvider = contextProvider; _builder = builder; _clock = clock; _logger = logger;
         CurrentTenantId = contextProvider.GetCurrent().TenantId;
         ChangeTracker.Tracked += (_, args) => { if (args.FromQuery) _trusted.Add(args.Entry.Entity); };
+        ChangeTracker.StateChanged += (_, args) => { if (args.NewState == EntityState.Detached) _trusted.Remove(args.Entry.Entity); };
     }
     internal void Stage(AuditEvent auditEvent) => _manual.Add(auditEvent);
     public override int SaveChanges() => throw new NotSupportedException("Use SaveChangesAsync; synchronous writes are prohibited to prevent audit bypass.");
@@ -67,7 +68,8 @@ public partial class AppDbContext
         }
         await ValidateProductReferencesAsync(entries, cancellationToken);
         ChangeTracker.DetectChanges();
-        var operationId = _pendingOperationId ?? context.OperationId ?? Guid.NewGuid();
+        var manualOperationId = _manual.Where(x => x.OperationId.HasValue).Select(x => x.OperationId).Distinct().SingleOrDefault();
+        var operationId = _pendingOperationId ?? context.OperationId ?? manualOperationId ?? Guid.NewGuid();
         _pendingOperationId = operationId;
         if (operationId == Guid.Empty) throw new ArgumentException("OperationId must not be empty.");
         var timestamp = _clock.GetUtcNow();
@@ -86,7 +88,7 @@ public partial class AppDbContext
                 .OrderBy(p => p.Metadata.Name).ToDictionary(p => p.Metadata.Name, p => p.CurrentValue)
         }).OrderBy(x => x.Entity).ThenBy(x => JsonSerializer.Serialize(x.Values)).ToArray(), _manual);
         var existing = await AuditOperations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == operationId, cancellationToken);
-        if (existing is not null) return CompleteReplay(existing, fingerprint, acceptAllChangesOnSuccess);
+        if (existing is not null) return await CompleteReplayAsync(existing, fingerprint, acceptAllChangesOnSuccess, cancellationToken);
         var receipt = new AuditOperation { Id = operationId, TenantId = CurrentTenantId, Fingerprint = fingerprint,
             Timestamp = timestamp, ResultCount = pending.Count + records.Count + 1 };
         AuditTrails.AddRange(records);
@@ -112,7 +114,7 @@ public partial class AppDbContext
                 try
                 {
                     var committed = await AuditOperations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == operationId, cancellationToken);
-                    if (committed is not null) return CompleteReplay(committed, fingerprint, acceptAllChangesOnSuccess);
+                    if (committed is not null) return await CompleteReplayAsync(committed, fingerprint, acceptAllChangesOnSuccess, cancellationToken);
                 }
                 catch (Exception verification) when (verification is not OperationCanceledException && verification is not InvalidOperationException)
                 { _logger.LogWarning("Commit verification unavailable for {OperationId}; retry with the same operation ID", operationId); }
@@ -120,12 +122,21 @@ public partial class AppDbContext
             throw;
         }
     }
-    private int CompleteReplay(AuditOperation receipt, string fingerprint, bool accept)
+    private async Task<int> CompleteReplayAsync(AuditOperation receipt, string fingerprint, bool accept, CancellationToken ct)
     {
         if (receipt.Kind != "Save" || receipt.TenantId != CurrentTenantId || receipt.Fingerprint != fingerprint)
             throw new InvalidOperationException("OperationId was reused for a different command or tenant.");
+        var entries = ChangeTracker.Entries().Where(x => x.Entity is IAuditableEntity).ToList();
+        // A fresh context replaying a committed insert must also recover database rowversions.
+        foreach (var entry in entries.Where(x => x.State is EntityState.Added or EntityState.Modified))
+        {
+            var stored = await entry.GetDatabaseValuesAsync(ct)
+                ?? throw new InvalidOperationException("Committed operation exists, but its entity is no longer available. Reload the command result.");
+            foreach (var property in entry.Properties.Where(x => x.Metadata.ValueGenerated != Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never))
+                property.CurrentValue = stored[property.Metadata.Name];
+        }
         if (accept) ChangeTracker.AcceptAllChanges();
-        Finish(accept, ChangeTracker.Entries().Where(x => x.Entity is IAuditableEntity).ToList());
+        Finish(accept, entries);
         return receipt.ResultCount;
     }
     private void Finish(bool accept, List<EntityEntry> entries)
@@ -154,9 +165,10 @@ public partial class AppDbContext
         if (entity is null || !typeof(ITenantEntity).IsAssignableFrom(entity.ClrType))
             throw new InvalidOperationException("Entity-bound manual events must identify a mapped tenant entity. Use a standalone event without PkId otherwise.");
         if (entries.Any(x => x.Metadata == entity && Equals(x.Property("Id").CurrentValue, id))) return;
-        var exists = entity.ClrType == typeof(Category) ? await Categories.AnyAsync(x => x.Id == id, ct)
-            : entity.ClrType == typeof(Supplier) ? await Suppliers.AnyAsync(x => x.Id == id, ct)
-            : entity.ClrType == typeof(Product) && await Products.AnyAsync(x => x.Id == id, ct);
+        var method = typeof(AppDbContext).GetMethod(nameof(EntityExistsAsync), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var exists = await (Task<bool>)method.MakeGenericMethod(entity.ClrType).Invoke(this, [id, ct])!;
         if (!exists) throw new UnauthorizedAccessException("Manual event entity is unavailable in the current tenant.");
     }
+    private Task<bool> EntityExistsAsync<T>(Guid id, CancellationToken ct) where T : class =>
+        Set<T>().AnyAsync(x => EF.Property<Guid>(x, "Id") == id, ct);
 }

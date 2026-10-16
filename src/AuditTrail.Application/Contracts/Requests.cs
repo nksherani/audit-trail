@@ -16,3 +16,8 @@ public record ProductRequest(
     [Range(0, int.MaxValue)] int StockQuantity,
     Guid CategoryId,
     Guid SupplierId);
+
+public sealed record BulkDeleteRequest([Required] Guid[] Ids, Guid? OperationId);
+public sealed record BulkProductRequest([Required] Guid[] Ids,
+    [Range(typeof(decimal), "0", "9999999999999999.99")] decimal? Price,
+    [Range(0, int.MaxValue)] int? StockQuantity, bool? IsDeleted, Guid? OperationId);

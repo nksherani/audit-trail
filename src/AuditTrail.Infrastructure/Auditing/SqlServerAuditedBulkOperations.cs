@@ -86,6 +86,13 @@ public sealed class SqlServerAuditedBulkOperations(IDbContextFactory<AppDbContex
                 int parameterIndex = 0;
                 string Parameter(object? value, IProperty? p = null)
                 {
+                    if (value is BulkValue.UtcNow)
+                    {
+                        var type = p is null ? null : Nullable.GetUnderlyingType(p.ClrType) ?? p.ClrType;
+                        if (type != typeof(DateTimeOffset) && type != typeof(DateTime))
+                            throw new ArgumentException("BulkValue.UtcNow requires a date/time property.");
+                        value = type == typeof(DateTime) ? timestamp.UtcDateTime : (object)timestamp;
+                    }
                     if (value is JsonElement json && p is not null) value = JsonSerializer.Deserialize(json.GetRawText(), p.ClrType);
                     if (value is not null && p is not null && !(Nullable.GetUnderlyingType(p.ClrType) ?? p.ClrType).IsInstanceOfType(value))
                         throw new ArgumentException($"Bulk value for {p.Name} must be {p.ClrType.Name}.");

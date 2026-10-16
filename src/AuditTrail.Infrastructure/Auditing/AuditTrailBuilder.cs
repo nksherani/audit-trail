@@ -26,6 +26,13 @@ public sealed class AuditTrailBuilder(AuditPropertyPolicy policy, AuditValueSeri
         if (entry.Metadata.GetComplexProperties().Any() || entry.Metadata.GetNavigations().Any(x => x.TargetEntityType.IsOwned()))
             throw new NotSupportedException("Owned/complex entity graphs require an explicit scalar JSON mapping before auditing.");
         var properties = entry.Metadata.GetProperties().Where(x => policy.Resolve(x) != AuditDisposition.Ignore).ToArray();
+        foreach (var property in properties)
+        {
+            // Pre-save snapshots must not claim precision that SQL Server will round away.
+            if (property.GetScale() is int scale && entry.Property(property.Name).CurrentValue is decimal amount &&
+                decimal.Round(amount, scale, MidpointRounding.AwayFromZero) != amount)
+                throw new InvalidOperationException($"{property.Name} exceeds the mapped decimal scale ({scale}).");
+        }
         var name = entry.Metadata.ClrType.FullName!;
         if (entry.State is EntityState.Added or EntityState.Deleted)
         {
@@ -92,13 +99,15 @@ public sealed class AuditTrailBuilder(AuditPropertyPolicy policy, AuditValueSeri
         if (auditEvent.ColumnName is not null && property is null)
             throw new ArgumentException("Manual field changes must identify a mapped property by its full entity name.");
         var disposition = property is null ? AuditDisposition.Include : policy.Resolve(property);
+        if (property is not null) record.DataType = AuditValueSerializer.TypeName(property);
         if (disposition == AuditDisposition.Ignore && (auditEvent.OldValue is not null || auditEvent.NewValue is not null))
             throw new InvalidOperationException("Cannot manually audit an ignored field.");
         // Arbitrary snapshot payloads are prohibited: manual structured values go through redacted metadata.
         if (property is null && (auditEvent.OldValue is not null || auditEvent.NewValue is not null))
             throw new ArgumentException("Manual old/new values require an eligible mapped ColumnName; use Metadata for structured event context.");
-        record.OldValue = serializer.Serialize(disposition == AuditDisposition.Mask && auditEvent.OldValue is not null ? AuditValueSerializer.Mask : auditEvent.OldValue);
-        record.NewValue = serializer.Serialize(disposition == AuditDisposition.Mask && auditEvent.NewValue is not null ? AuditValueSerializer.Mask : auditEvent.NewValue);
+        var json = property?.PropertyInfo?.IsDefined(typeof(AuditJsonAttribute), true) == true;
+        record.OldValue = serializer.Serialize(disposition == AuditDisposition.Mask && auditEvent.OldValue is not null ? AuditValueSerializer.Mask : auditEvent.OldValue, json);
+        record.NewValue = serializer.Serialize(disposition == AuditDisposition.Mask && auditEvent.NewValue is not null ? AuditValueSerializer.Mask : auditEvent.NewValue, json);
         record.Metadata = serializer.Metadata(auditEvent.Metadata);
         return record;
     }

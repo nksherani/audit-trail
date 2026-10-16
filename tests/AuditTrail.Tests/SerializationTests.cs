@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using AuditTrail.Infrastructure.Auditing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace AuditTrail.Tests;
 
@@ -45,4 +47,18 @@ public sealed class SerializationTests
         Assert.Throws<NotSupportedException>(() => _serializer.Serialize(new { Unsafe = new object() }));
         Assert.Throws<InvalidOperationException>(() => new AuditValueSerializer(new() { MaxValueLength = 4 }).Serialize("long-string"));
     }
+    [Fact]
+    public void Configured_ef_value_comparer_is_honored_and_explicit_json_is_sanitized()
+    {
+        var model = new ModelBuilder();
+        model.Entity<ComparableValue>().HasKey(x => x.Id);
+        model.Entity<ComparableValue>().Property(x => x.Value).Metadata.SetValueComparer(new ValueComparer<string>(
+            (a, b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase),
+            value => value.ToUpperInvariant().GetHashCode(), value => value));
+        var property = model.FinalizeModel().FindEntityType(typeof(ComparableValue))!.FindProperty(nameof(ComparableValue.Value))!;
+        Assert.True(AuditValueSerializer.Equal(property, "UNCHANGED", "unchanged"));
+        var json = _serializer.Serialize(new { Email = "private@example.com", AccessToken = "private-token" }, allowJson: true);
+        Assert.DoesNotContain("private@example.com", json); Assert.DoesNotContain("private-token", json);
+    }
+    private sealed class ComparableValue { public Guid Id { get; set; } public string Value { get; set; } = ""; }
 }

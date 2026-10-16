@@ -1,0 +1,41 @@
+@host = http://localhost:5063
+@token = replace-with-valid-access-token
+@productId = 00000000-0000-0000-0000-000000000001
+@operationId = 00000000-0000-0000-0000-000000000002
+
+### AuditReader role required. Use IDs returned by an authenticated CRUD request in the same tenant.
+GET {{host}}/api/audit-history?EntityName=AuditTrail.Domain.Entities.Product&PkId={{productId}}&Page=1&PageSize=50
+Authorization: Bearer {{token}}
+
+### Page complete operations rather than individual changed fields
+GET {{host}}/api/audit-history/grouped?PkId={{productId}}&PageSize=10
+Authorization: Bearer {{token}}
+
+### Soft delete: automatic field-level audit (use the same tenant identity)
+POST {{host}}/api/products/{{productId}}/soft-delete
+Authorization: Bearer {{token}}
+
+### Restore
+POST {{host}}/api/products/{{productId}}/restore
+Authorization: Bearer {{token}}
+
+### Manual business event (AuditWriter role)
+POST {{host}}/api/products/{{productId}}/review
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "reason": "Verified by the inventory reviewer" }
+
+### Audited bulk constant update. Reuse operationId only for a retry of this exact command.
+POST {{host}}/api/products/bulk-update
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "ids": ["{{productId}}"], "price": 25.00, "stockQuantity": 10, "operationId": "{{operationId}}" }
+
+### Bulk hard delete: generate a NEW operationId before executing this command
+POST {{host}}/api/products/bulk-delete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "ids": ["{{productId}}"], "operationId": "{{operationId}}" }

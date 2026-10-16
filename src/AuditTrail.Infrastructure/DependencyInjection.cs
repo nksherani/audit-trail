@@ -12,6 +12,9 @@ namespace AuditTrail.Infrastructure;
 public static class DependencyInjection
 {
     public static IServiceCollection AddAuditTrailInfrastructure(this IServiceCollection services, string connectionString,
+        Action<AuditOptions>? configure = null) => services.AddAuditTrailInfrastructure(_ => connectionString, configure);
+
+    public static IServiceCollection AddAuditTrailInfrastructure(this IServiceCollection services, Func<IServiceProvider, string> connectionString,
         Action<AuditOptions>? configure = null)
     {
         var options = new AuditOptions(); configure?.Invoke(options);
@@ -19,10 +22,11 @@ public static class DependencyInjection
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<BackgroundAuditContext>();
         services.TryAddScoped<IAuditContextProvider>(sp => sp.GetRequiredService<BackgroundAuditContext>());
+        services.TryAddScoped<IAuditAccessProvider, DenyAuditHistoryAccess>();
         services.AddSingleton<AuditPropertyPolicy>();
         services.AddSingleton<AuditValueSerializer>();
         services.AddSingleton<AuditTrailBuilder>();
-        services.AddDbContextFactory<AppDbContext>(o => o.UseSqlServer(connectionString,
+        services.AddDbContextFactory<AppDbContext>((sp, o) => o.UseSqlServer(connectionString(sp),
             sql => sql.EnableRetryOnFailure(3)), ServiceLifetime.Scoped);
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IAuditTrailWriter, AuditTrailWriter>();
@@ -34,4 +38,10 @@ public static class DependencyInjection
         services.AddScoped<ICrudService<ProductRequest, ProductResponse>>(sp => sp.GetRequiredService<ProductService>());
         return services;
     }
+}
+
+internal sealed class DenyAuditHistoryAccess(IAuditContextProvider context) : IAuditAccessProvider
+{
+    public bool CanReadHistory => false;
+    public string? TenantId => context.GetCurrent().TenantId;
 }

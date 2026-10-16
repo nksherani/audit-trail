@@ -12,7 +12,7 @@ public sealed class AuditOptions
 {
     public HashSet<string> IgnoredNames { get; } = new(StringComparer.OrdinalIgnoreCase)
         { "Password", "PasswordHash", "AccessToken", "RefreshToken", "ApiKey", "Secret", "ConnectionString" };
-    public HashSet<string> MaskedNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> MaskedNames { get; } = new(StringComparer.OrdinalIgnoreCase) { "Email" };
     public HashSet<string> UnsupportedNames { get; } = new(StringComparer.OrdinalIgnoreCase);
     public int MaxValueLength { get; set; } = 65536;
     public int MaxBulkRows { get; set; } = 10000;
@@ -44,7 +44,8 @@ public sealed class AuditValueSerializer(AuditOptions options)
             or float or double or decimal or DateTime or DateTimeOffset or DateOnly or TimeOnly or JsonElement or JsonDocument) && !allowJson)
             throw new NotSupportedException($"Audit serialization of {type.FullName} requires an explicit JSON policy.");
         // Scalar values are JSON tokens too: null, empty strings, and literal "null" remain distinct.
-        return Check(JsonSerializer.Serialize(value, type, Json));
+        return Check(allowJson ? JsonSerializer.Serialize(Redact(JsonSerializer.SerializeToElement(value, type, Json)), Json)
+            : JsonSerializer.Serialize(value, type, Json));
     }
     public object? SnapshotValue(IProperty property, object? value, AuditDisposition disposition)
     {

@@ -1,85 +1,123 @@
-# Audit Trail Demo — CRUD foundation
+# Audit Trail Demo
 
-A small .NET 10 controller-based Web API using EF Core 10 and SQL Server.
-Audit tracking is left for the next stage.
+.NET 10 / EF Core 10 / SQL Server audit framework implementing
+[the audit plan](wiki/audit-plan.md) with Clean Architecture.
 
-## Run
+## Structure
 
-Requires the .NET 10 SDK and SQL Server. The default connection uses the local
-default SQL Server instance, Windows authentication, and database `AuditTrailDemo`.
-Your SQL login needs permission to create the database, or configure an existing
-empty database with schema permissions.
+| Project | Responsibility |
+| --- | --- |
+| `src/AuditTrail.Domain` | Business entities, auditing marker and property attributes |
+| `src/AuditTrail.Application` | CRUD use cases and audit/bulk/query abstractions |
+| `src/AuditTrail.Infrastructure` | EF Core, migrations, automatic/manual audits, SQL Server bulk capture |
+| `src/AuditTrail.Api` | HTTP endpoints, trusted actor resolution, authorization, composition |
+| `tests/AuditTrail.Tests` | Unit, real SQL Server, HTTP, architecture, resilience and performance tests |
 
-Edit `ConnectionStrings:DefaultConnection` in `src/AuditTrail.Api/appsettings.json`
-for a different server. Keep SQL passwords out of source control; the environment
-variable `ConnectionStrings__DefaultConnection` overrides this setting.
-`TrustServerCertificate=True` is for local development; use a trusted server
-certificate when deploying.
+Dependencies point inward. Domain and Application have no EF Core or ASP.NET
+references. [Implementation decisions and coverage](wiki/audit-implementation.md)
+explain supported paths, security, retries, tenancy and deployment.
 
-From the solution folder:
+## Run locally
+
+Requires .NET SDK 10.0.300 or a later 10.0.3xx patch and SQL Server. The default
+connection uses `localhost`, Windows authentication, database `AuditTrailDemo`.
+Change `ConnectionStrings:DefaultConnection` in the API's appsettings.json or set
+`ConnectionStrings__DefaultConnection` in the environment. Keep credentials out
+of source control. TrustServerCertificate is intended for local development.
 
 ```powershell
 dotnet restore
 dotnet tool restore
-dotnet ef database update --project src/AuditTrail.Api
+dotnet ef database update --project src/AuditTrail.Infrastructure --startup-project src/AuditTrail.Api
 dotnet run --project src/AuditTrail.Api --launch-profile http
 ```
 
-The API runs at `http://localhost:5063`. Its development OpenAPI document is at
-`http://localhost:5063/openapi/v1.json`. Use `src/AuditTrail.Api/AuditTrail.Api.http`
-to exercise the endpoints. Replace its ID variables with IDs returned by POST.
-Migrations are applied explicitly, rather than automatically on startup.
+API: `http://localhost:5063`; development OpenAPI: `/openapi/v1.json`.
+Migrations are applied explicitly, never automatically by the web host. The
+existing migration IDs and demo data are preserved by the project restructuring.
 
-With the API running, `pwsh -File scripts/Smoke-Test.ps1` checks all three CRUD
-flows, validation, and relationships against SQL Server and removes its records.
+## Try the demo
 
-After changing the model:
+`src/AuditTrail.Api/AuditTrail.Api.http` includes CRUD calls for categories,
+suppliers and products. Each resource supports list/get/create/update/delete.
+IDs and FKs are GUIDs generated in C# before persistence. Product foreign keys
+restrict category/supplier deletion while products still reference them.
+
+Automatic auditing needs no repository calls:
+
+- Insert: one eligible JSON snapshot in NewValue.
+- Update: one record per genuinely changed eligible field.
+- Hard delete: one eligible JSON snapshot in OldValue.
+- Product soft delete/restore: ordinary field changes.
+- Supplier email is masked; internal notes and generated rowversions are excluded.
+
+`POST /api/products/{id}/soft-delete` and `/restore` demonstrate soft deletion.
+Soft-deleted rows remain visible in this demo so restoring/reviewing them is easy.
+`ImportCheckpoint` demonstrates an intentionally non-auditable operational entity.
+
+## Protected audit endpoints
+
+Configure `Authentication__Authority` with a trusted HTTPS OpenID Connect issuer
+and `Authentication__Audience` with the API audience. Tokens must contain a
+validated subject, appropriate role claims, and `tenant_id` when using tenants.
+No authentication bypass or development token issuer is built into the API.
+
+| Route | Required role |
+| --- | --- |
+| `GET /api/audit-history` | AuditReader |
+| `GET /api/audit-history/grouped` | AuditReader |
+| `POST /api/products/{id}/review` | AuditWriter |
+| `POST /api/products/bulk-update` | AuditWriter |
+| `POST /api/products/bulk-delete` | AuditWriter |
+
+Examples are in `src/AuditTrail.Api/AuditTrail.Auditing.http`. History supports
+entity/GUID, actor, event, record/operation type, operation/correlation ID,
+time range and pagination. Tenant claims scope queries and writes; supplying a
+TenantId query parameter cannot elevate access.
+
+Existing CRUD routes remain anonymous for the local demo. Those operations are
+recorded as System/WebAPI in the null-tenant namespace. Authenticated tenants
+cannot see that namespace's business data/history. Secure CRUD before production.
+
+## Manual events and workers
+
+Inject `IAuditTrailWriter`, stage `AddManual(AuditEvent)`, then save the business
+unit of work. `WriteStandaloneAsync` uses its own context and does not flush
+pending business changes. `BackgroundAuditContext` supports trusted Function,
+scheduler, integration and queue scopes without HttpContext. See the integration
+examples and failure/replay rules in `wiki/audit-implementation.md`.
+
+Bulk commands use validated explicit GUID IDs, equality filters and constant
+assignments. SQL Server OUTPUT captures actual old/new values. Audit writes and
+business SQL share one transaction; SqlBulkCopy inserts audit rows in batches.
+Direct EF ExecuteUpdate/Delete and raw business SQL are not approved write paths.
+
+## Verify
 
 ```powershell
-dotnet ef migrations add YourMigrationName --project src/AuditTrail.Api
-dotnet ef database update --project src/AuditTrail.Api
+dotnet test AuditTrail.slnx
+# With the API running (PowerShell 7):
+pwsh -File scripts/Smoke-Test.ps1
 ```
 
-## Model and endpoints
+Tests create/migrate/drop only a uniquely named `AuditTrailTests_<GUID>` database
+on local SQL Server. Set `AUDIT_TEST_SQLSERVER` to use another test instance. The
+account needs permission to create/drop that test database and create users for
+SQL permission checks. There is no EF in-memory transaction substitute.
 
-Each product belongs to one category and one supplier.
+The performance test covers 1,000 rows and records timings without inventing an
+SLO. See [the measured baseline](wiki/performance-baseline.md).
 
-| Resource | Fields | Route |
-| --- | --- | --- |
-| Category | Id, Name, Description | `/api/categories` |
-| Supplier | Id, Name, Email | `/api/suppliers` |
-| Product | Id, Name, Price, StockQuantity, CategoryId, SupplierId | `/api/products` |
+## Database deployment
 
-Every route supports GET (list), GET `/{id}`, POST, PUT `/{id}`, and DELETE `/{id}`.
-POST returns 201 and a Location header; PUT and DELETE return 204. Missing resources
-return 404 and invalid requests return 400. Product reads include category and
-supplier names. Deleting a category or supplier that still has products returns
-409; delete or reassign the products first.
+```powershell
+dotnet ef migrations add YourMigration --project src/AuditTrail.Infrastructure --startup-project src/AuditTrail.Api
+dotnet ef migrations script --idempotent --project src/AuditTrail.Infrastructure --startup-project src/AuditTrail.Api --output deployment.sql
+```
 
-Request DTOs use data annotations. Price and stock cannot be negative, and products
-must reference existing categories and suppliers. SQL Server also enforces foreign
-keys and nonnegative price/stock check constraints.
-
-## Project layout
-
-- `Entities/`: three plain EF entities.
-- `Data/AppDbContext.cs`: DbSets, relationships, and database configuration.
-- `Contracts/`: request and response DTOs.
-- `Controllers/`: CRUD actions using tracked EF operations and SaveChangesAsync.
-- `Migrations/`: initial SQL Server schema and model snapshot.
-
-This is an unauthenticated local demo with no seeded data. No audit entities,
-interceptors, or SaveChanges overrides have been added.
-
-## Application-generated GUID keys
-
-All entity primary keys are `Guid` values initialized with `Guid.NewGuid()` in C#.
-EF uses `ValueGeneratedNever()` for these keys; the final SQL Server schema has
-no identity columns or GUID default generators. Product foreign keys, DTOs, and
-route parameters also use GUIDs. Supply category/supplier IDs returned by POST
-when creating a product; primary keys are not accepted in request DTOs.
-
-`UseApplicationGeneratedGuids` upgrades existing integer keys without deleting
-rows, assigning GUIDs to historical rows once and remapping product references.
-Existing external references to integer IDs must be updated. This migration
-cannot restore the original integer IDs on rollback; restore a backup to revert.
+Review/backup before applying migrations to a non-demo database. Apply
+`scripts/sql/audit-permissions.sql` with a deployment principal and assign a
+non-owner runtime login to the appropriate writer/reader roles. The script denies
+ordinary audit UPDATE/DELETE and separates retention permissions. Local Windows
+login memberships are not changed automatically. Retention defaults to keeping
+history indefinitely; no automatic purge job is installed.

@@ -175,6 +175,16 @@ public sealed class AutomaticAuditTests(SqlServerFixture fixture)
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => s.Db.SaveChangesAsync(cancelled.Token));
     }
+    [Fact]
+    public async Task Precision_loss_and_detach_reattach_without_originals_are_rejected()
+    {
+        await using var s = fixture.Open(); var product = NewProduct(); product.Price = 1.001m; s.Db.Add(product);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Db.SaveChangesAsync());
+        product.Price = 1m; await s.Db.SaveChangesAsync();
+        s.Db.Entry(product).State = EntityState.Detached;
+        s.Db.Update(product);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Db.SaveChangesAsync());
+    }
     internal static Product NewProduct() => new() { Name = "Product", Price = 10, StockQuantity = 2,
         Category = new() { Name = "Category" }, Supplier = new() { Name = "Supplier", Email = "supplier@example.com" } };
 }

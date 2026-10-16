@@ -13,7 +13,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<HttpAuditContextProvider>();
 builder.Services.AddScoped<IAuditContextProvider>(sp => sp.GetRequiredService<HttpAuditContextProvider>());
 builder.Services.AddScoped<IAuditAccessProvider>(sp => sp.GetRequiredService<HttpAuditContextProvider>());
-builder.Services.AddAuditTrailInfrastructure(builder.Configuration.GetConnectionString("DefaultConnection")
+builder.Services.AddAuditTrailInfrastructure(sp => sp.GetRequiredService<IConfiguration>().GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing."));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
