@@ -25,6 +25,13 @@ Change `ConnectionStrings:DefaultConnection` in the API's appsettings.json or se
 `ConnectionStrings__DefaultConnection` in the environment. Keep credentials out
 of source control. TrustServerCertificate is intended for local development.
 
+For Visual Studio, use **Visual Studio 2026 (18.0 or later)** with the ASP.NET
+and web development workload. Visual Studio 2022 cannot target this .NET 10
+solution, even when the standalone SDK is installed. An SDK-not-found error
+for every project in VS 2022 is an IDE/SDK compatibility issue. Install VS 2026
+side by side and open `AuditTrail.slnx` there, or use the `dotnet` CLI below.
+See [Microsoft's SDK/Visual Studio compatibility table](https://learn.microsoft.com/en-us/dotnet/core/porting/versioning-sdk-msbuild-vs).
+
 ```powershell
 dotnet restore
 dotnet tool restore
