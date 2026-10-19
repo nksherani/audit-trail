@@ -3,6 +3,8 @@
 .NET 10 / EF Core 10 / SQL Server audit framework implementing
 [the audit plan](wiki/audit-plan.md) with Clean Architecture.
 
+For team discussions, use the [short plan overview](wiki/audit-plan-summary.md).
+
 ## Structure
 
 | Project | Responsibility |
